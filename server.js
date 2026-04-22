@@ -3,29 +3,76 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const cors = require('cors');
+const https = require('https');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Simple in-memory storage as fallback for Railway
+let inMemoryKeys = [];
+let inMemoryProjects = {};
+
 // Cloud storage - use tmp directory or current directory for Railway
 const isRailway = process.env.RAILWAY_ENVIRONMENT_NAME !== undefined;
-const dataDir = isRailway ? '/tmp/projectflow-data' : path.join(os.homedir(), 'AppData', 'Roaming', 'CaseFlowShared');
+const dataDir = isRailway ? '/tmp' : path.join(os.homedir(), 'AppData', 'Roaming', 'CaseFlowShared');
 
 // Ensure data directory exists
-if (!fs.existsSync(dataDir)) {
+if (!isRailway && !fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
 const accessKeysFile = path.join(dataDir, 'access-keys.json');
 const projectsFile = path.join(dataDir, 'projects.json');
 
-// Initialize files
-if (!fs.existsSync(projectsFile)) {
-  fs.writeFileSync(projectsFile, JSON.stringify({}));
-}
+// Helper functions for file operations with fallback
+const readAccessKeys = () => {
+  try {
+    if (fs.existsSync(accessKeysFile)) {
+      const content = fs.readFileSync(accessKeysFile, 'utf-8').trim();
+      if (content) return JSON.parse(content);
+    }
+  } catch (e) {
+    console.error('Error reading access keys:', e.message);
+  }
+  return inMemoryKeys;
+};
 
+const writeAccessKeys = (keys) => {
+  inMemoryKeys = keys;
+  try {
+    fs.writeFileSync(accessKeysFile, JSON.stringify(keys, null, 2));
+  } catch (e) {
+    console.error('Error writing access keys:', e.message);
+  }
+};
+
+const readProjects = () => {
+  try {
+    if (fs.existsSync(projectsFile)) {
+      const content = fs.readFileSync(projectsFile, 'utf-8').trim();
+      if (content) return JSON.parse(content);
+    }
+  } catch (e) {
+    console.error('Error reading projects:', e.message);
+  }
+  return inMemoryProjects;
+};
+
+const writeProjects = (projects) => {
+  inMemoryProjects = projects;
+  try {
+    fs.writeFileSync(projectsFile, JSON.stringify(projects, null, 2));
+  } catch (e) {
+    console.error('Error writing projects:', e.message);
+  }
+};
+
+// Initialize storage
 if (!fs.existsSync(accessKeysFile)) {
-  fs.writeFileSync(accessKeysFile, JSON.stringify([]));
+  writeAccessKeys([]);
+}
+if (!fs.existsSync(projectsFile)) {
+  writeProjects({});
 }
 
 app.use(cors());
@@ -40,15 +87,7 @@ app.post('/api/auth/register', (req, res) => {
       return res.status(400).json({ error: 'Company name and access key are required' });
     }
 
-    let accessKeysData = [];
-    if (fs.existsSync(accessKeysFile)) {
-      try {
-        const content = fs.readFileSync(accessKeysFile, 'utf-8').trim();
-        if (content) accessKeysData = JSON.parse(content);
-      } catch (e) {
-        console.error('Error reading access keys:', e);
-      }
-    }
+    let accessKeysData = readAccessKeys();
 
     // Check if key already exists
     const exists = accessKeysData.some(k => k.companyName === companyName && k.accessKey === accessKey.toUpperCase());
@@ -66,7 +105,7 @@ app.post('/api/auth/register', (req, res) => {
       used: true
     });
 
-    fs.writeFileSync(accessKeysFile, JSON.stringify(accessKeysData, null, 2));
+    writeAccessKeys(accessKeysData);
     res.json({ success: true, message: 'Access key registered successfully' });
   } catch (error) {
     console.error('Error registering access key:', error);
@@ -83,21 +122,9 @@ const validateAccessKey = (req, res, next) => {
   }
 
   try {
-    let accessKeysData = [];
+    let accessKeysData = readAccessKeys();
 
-    // Read from access keys file
-    if (fs.existsSync(accessKeysFile)) {
-      try {
-        const content = fs.readFileSync(accessKeysFile, 'utf-8').trim();
-        if (content) {
-          accessKeysData = JSON.parse(content);
-        }
-      } catch (e) {
-        console.error('Error parsing access keys:', e);
-      }
-    }
-
-    if (accessKeysData.length === 0) {
+    if (!accessKeysData || accessKeysData.length === 0) {
       return res.status(401).json({ error: 'No access keys configured. Register a key first using /api/auth/register' });
     }
 
@@ -141,7 +168,7 @@ app.post('/api/auth/login', validateAccessKey, (req, res) => {
 // Get projects for a company
 app.post('/api/projects/get', validateAccessKey, (req, res) => {
   try {
-    const data = JSON.parse(fs.readFileSync(projectsFile, 'utf-8'));
+    const data = readProjects();
     const company = req.company;
     res.json({ projects: data[company] || [] });
   } catch (error) {
@@ -153,10 +180,10 @@ app.post('/api/projects/get', validateAccessKey, (req, res) => {
 // Save projects for a company
 app.post('/api/projects/save', validateAccessKey, (req, res) => {
   try {
-    const data = JSON.parse(fs.readFileSync(projectsFile, 'utf-8'));
+    const data = readProjects();
     const company = req.company;
     data[company] = req.body.projects;
-    fs.writeFileSync(projectsFile, JSON.stringify(data, null, 2));
+    writeProjects(data);
     res.json({ success: true });
   } catch (error) {
     console.error('Error saving projects:', error);
