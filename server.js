@@ -3,7 +3,6 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const cors = require('cors');
-const https = require('https');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -213,4 +212,15 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Local access: http://localhost:${PORT}`);
   console.log(`Data directory: ${dataDir}`);
   console.log(`Environment: ${isRailway ? 'RAILWAY' : 'LOCAL'}`);
+});
+
+// Error handling
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // Don't exit - keep the server running
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit - keep the server running
 });
